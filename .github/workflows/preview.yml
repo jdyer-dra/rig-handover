@@ -1,0 +1,58 @@
+# Plan morning-digest § 3–4, ADR 0003. Saves /digest/<night> as one HTML file in CI and deploys it
+# to GitHub Pages. The preview never enters git, so its marker can be taken off by running this
+# again with marker off: same page, same link, banner "no marker set".
+name: preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      night:
+        description: Night to preview
+        default: '2026-10-28'
+      marker:
+        description: Show the lane marker (turn off for the clean-up)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@12.16.1 --activate
+      - run: pnpm install --no-frozen-lockfile
+      - name: Save the page
+        env:
+          LANE_MARKER: ${{ inputs.marker && secrets.LANE_MARKER || '' }}
+          PORT: 8787
+        run: |
+          pnpm start > rig.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:8787/health > /dev/null && break; sleep 1; done
+          mkdir -p _site
+          curl -sf "localhost:8787/digest/${{ inputs.night }}" -o _site/index.html
+          grep -o 'class="marker">[^<]*' _site/index.html | grep -q 'no marker set' && echo "banner: no marker set" || echo "banner: marker shown"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
